@@ -2,6 +2,7 @@
 #include <epoxy/gl.h>
 #include <epoxy/glx.h>
 #include <gtk/gtk.h>
+#include <math.h>
 #include "DashGL/dashgl.h"
 
 static void on_realize(GtkGLArea *area);
@@ -51,6 +52,7 @@ struct {
     vec3 *pos;
     int num_enemies;
     float dx, dy;
+    gboolean *active;
 } enemy;
 
 int main(int argc, char *argv[])
@@ -113,7 +115,7 @@ static void on_realize(GtkGLArea *area)
 
 
     // Background Sprite
-    GLfloat triangle_vertices[] = {
+    GLfloat background_vertices[] = {
         0.0, 0.0, 0.0, 0.0,
         0.0, HEIGHT, 0.0, 1.0,
         WIDTH, HEIGHT, 1.0, 1.0,
@@ -127,8 +129,8 @@ static void on_realize(GtkGLArea *area)
     glBindBuffer(GL_ARRAY_BUFFER, background.vbo);
     glBufferData(
             GL_ARRAY_BUFFER,
-            sizeof(triangle_vertices),
-            triangle_vertices,
+            sizeof(background_vertices),
+            background_vertices,
             GL_STATIC_DRAW
             );
 
@@ -198,18 +200,20 @@ static void on_realize(GtkGLArea *area)
     enemy.tex = shader_load_texture("sprites/enemy.png");
     enemy.num_enemies = 10;
     enemy.pos = malloc(enemy.num_enemies * sizeof(vec3));
-   
+    enemy.active = malloc(enemy.num_enemies * sizeof(gboolean));
+
     enemy.dx = 3.0f;
     enemy.dy = -10.0f;
 
     float x = 70.0f;
-    float y = HEIGHT - 140.0F;
+    float y = HEIGHT - 140.0f;
 
     for(i = 0; i < enemy.num_enemies; i++)
     {
         enemy.pos[i][0] = x;
         enemy.pos[i][1] = y;
         enemy.pos[i][2] = 0.0f;
+        enemy.active[i] = TRUE;
 
         x += 90.0f;
 
@@ -217,12 +221,6 @@ static void on_realize(GtkGLArea *area)
         {
             x = 70.0f;
             y += 90.0f;
-        }
-
-        if(i == 4)
-        {
-            x = 70.0f;
-            y += 70.0f;
         }
     }
 
@@ -411,6 +409,10 @@ static void on_render(GtkGLArea *area, GdkGLContext *context)
    
     for(i = 0; i < enemy.num_enemies; i++)
     {
+        if(!enemy.active[i])
+        {
+            continue;
+        }
         mat4_translate(enemy.pos[i], enemy.mvp);
         glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, enemy.mvp);
         
@@ -462,7 +464,7 @@ static gboolean on_idle(gpointer data)
         player.pos[0] = WIDTH;
     }
 
-    int i;
+    int i, k;
     for(i = 0; i < player.num_bullets; i++)
     {
         if(!player.active[i])
@@ -480,6 +482,10 @@ static gboolean on_idle(gpointer data)
     gboolean do_switch = FALSE;
     for(i = 0; i < enemy.num_enemies; i++)
     {
+        if(!enemy.active[i])
+        {
+            continue;
+        }
         enemy.pos[i][0] += enemy.dx;
         if(enemy.pos[i][0] > WIDTH || enemy.pos[i][0] < 0)
         {
@@ -493,6 +499,38 @@ static gboolean on_idle(gpointer data)
         for(i = 0; i < enemy.num_enemies; i++)
         {
             enemy.pos[i][1] += enemy.dy;
+        }
+    }
+
+    float x_dif, y_dif, hypo, radius;
+    for(i = 0; i < player.num_bullets; i++)
+    {
+        if(!player.active[i])
+        {
+            continue;
+        }
+        for(k = 0; k < enemy.num_enemies; k++)
+        {
+            if(!enemy.active[k])
+            {
+                continue;
+            }
+            x_dif = player.bullets[i][0] - enemy.pos[k][0];
+            y_dif = player.bullets[i][1] - enemy.pos[k][1];
+
+            hypo = pow(x_dif, 2) + pow(y_dif, 2);
+
+            if(hypotf(x_dif, y_dif) > 32.0f)
+            {
+                continue;
+            }
+
+            enemy.dx *= 1.05;
+
+            player.active[i] = FALSE;
+            enemy.active[k] = FALSE;
+
+            break;
         }
     }
 
