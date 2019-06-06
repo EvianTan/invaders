@@ -10,6 +10,8 @@ static void on_render(GtkGLArea *area, GdkGLContext *context);
 static gboolean on_idle(gpointer data);
 static gboolean on_keydown(GtkWidget *widget, GdkEventKey *event);
 static gboolean on_keyup(GtkWidget *widget, GdkEventKey *event);
+static void detect_player_hit(vec3 point);
+static void reset_game();
 
 #define WIDTH 640.0f
 #define HEIGHT 480.0f
@@ -54,6 +56,23 @@ struct {
     float dx, dy;
     gboolean *active;
 } enemy;
+
+struct {
+    int num_bullets;
+    gboolean *active;
+    vec3 *pos;
+    float dy;
+    GLuint vbo;
+    GLuint tex;
+    mat4 mvp;
+} bullets;
+
+struct {
+    GLuint vbo;
+    GLuint tex;
+    mat4 mvp;
+    gboolean off;
+} gameover;
 
 int main(int argc, char *argv[])
 {
@@ -105,8 +124,8 @@ static void on_realize(GtkGLArea *area)
     const GLubyte *renderer = glGetString(GL_RENDER);
     const GLubyte *version = glGetString(GL_VERSION);
 
-    printf("Renderer: %s\n", renderer);
-    printf("OpenGK version supported: %s\n", version);
+    g_print("Renderer: %s\n", renderer);
+    g_print("OpenGK version supported: %s\n", version);
 
     glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 
@@ -246,7 +265,64 @@ static void on_realize(GtkGLArea *area)
     
     bullet.tex = shader_load_texture("sprites/bullet.png"); 
     bullet.dy = 10.0f;
+    
+    // Enemy Bullet Sprite
+    GLfloat bullets_vertices[] = {
+        -12.0, -12.0, 0.0, 0.0,
+        -12.0,  12.0, 0.0, 1.0,
+         12.0,  12.0, 1.0, 1.0,
 
+        -12.0, -12.0, 0.0, 0.0,
+         12.0,  12.0, 1.0, 1.0,
+         12.0, -12.0, 1.0, 0.0
+    };
+
+    glGenBuffers(1, &bullets.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, bullets.vbo);
+    glBufferData(
+            GL_ARRAY_BUFFER,
+            sizeof(bullets_vertices),
+            bullets_vertices,
+            GL_STATIC_DRAW
+            );
+    
+    bullets.tex = shader_load_texture("sprites/enemy_bullet.png"); 
+    bullets.dy = -3.0f;
+
+    bullets.num_bullets = 10;
+    bullets.active = malloc(bullets.num_bullets * sizeof(gboolean));
+    bullets.pos = malloc(bullets.num_bullets * sizeof(vec3));
+
+    for(i = 0; i < bullets.num_bullets; i++)
+    {
+        bullets.active[i] = FALSE;
+    }
+    
+    // Gameover Sprite
+    GLfloat gameover_vertices[] = {
+        0.0, 0.0, 0.0, 0.0,
+        0.0, HEIGHT, 0.0, 1.0,
+        WIDTH, HEIGHT, 1.0, 1.0,
+
+        0.0, 0.0, 0.0, 0.0,
+        WIDTH, HEIGHT, 1.0, 1.0,
+        WIDTH, 0.0, 1.0, 0.0
+    };
+
+    glGenBuffers(1, &gameover.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, gameover.vbo);
+    glBufferData(
+            GL_ARRAY_BUFFER,
+            sizeof(gameover_vertices),
+            gameover_vertices,
+            GL_STATIC_DRAW
+            );
+    
+    mat4_identity(gameover.mvp);
+    gameover.tex = shader_load_texture("sprites/gameover.png"); 
+    gameover.off = TRUE;
+
+    // Compile Shader Program
     GLint compile_ok = GL_FALSE;
     GLint link_ok = GL_FALSE;
 
@@ -437,7 +513,70 @@ static void on_render(GtkGLArea *area, GdkGLContext *context)
         glDrawArrays(GL_TRIANGLES, 0, 6);
         
     }
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, bullets.tex);
+    glUniform1i(uniform_mytexture, 0);
+   
+    for(i = 0; i < bullets.num_bullets; i++)
+    {
+        if(!bullets.active[i])
+        {
+            continue;
+        }
+        mat4_translate(bullets.pos[i], bullets.mvp);
+        glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, bullets.mvp);
         
+        glBindBuffer(GL_ARRAY_BUFFER, bullets.vbo);
+        glVertexAttribPointer(
+        	attribute_coord2d,
+        	2,
+        	GL_FLOAT,
+        	GL_FALSE,
+        	sizeof(float) * 4,
+        	0
+        );
+        
+        glVertexAttribPointer(
+        	attribute_texcoord,
+        	2,
+        	GL_FLOAT,
+        	GL_FALSE,
+        	sizeof(float) * 4,
+        	(void*)(sizeof(float) * 2)
+        );
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    
+    if(!gameover.off)
+    {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, gameover.tex);
+        glUniform1i(uniform_mytexture, 0);
+
+        glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, gameover.mvp);
+        
+        glBindBuffer(GL_ARRAY_BUFFER, gameover.vbo);
+        glVertexAttribPointer(
+        	attribute_coord2d,
+        	2,
+        	GL_FLOAT,
+        	GL_FALSE,
+        	sizeof(float) * 4,
+        	0
+        );
+        
+        glVertexAttribPointer(
+        	attribute_texcoord,
+        	2,
+        	GL_FLOAT,
+        	GL_FALSE,
+        	sizeof(float) * 4,
+        	(void*)(sizeof(float) * 2)
+        );
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+
     glDisableVertexAttribArray(attribute_coord2d);
     glDisableVertexAttribArray(attribute_texcoord);
 
@@ -445,6 +584,10 @@ static void on_render(GtkGLArea *area, GdkGLContext *context)
 
 static gboolean on_idle(gpointer data)
 {
+    if(!gameover.off)
+    {
+        return TRUE;
+    }
     if(player.right)
     {
         player.pos[0] += 6.0f;
@@ -487,9 +630,29 @@ static gboolean on_idle(gpointer data)
             continue;
         }
         enemy.pos[i][0] += enemy.dx;
+        detect_player_hit(enemy.pos[i]);
+
         if(enemy.pos[i][0] > WIDTH || enemy.pos[i][0] < 0)
         {
             do_switch = TRUE;
+        }
+        if(rand() % 5000 < 4950)
+        {
+            continue;
+        }
+        for(k = 0; k < bullets.num_bullets; k++)
+        {
+            if(bullets.active[k])
+            {
+                continue;
+            }
+            bullets.active[k] = TRUE;
+
+            bullets.pos[k][0] = enemy.pos[i][0];
+            bullets.pos[k][1] = enemy.pos[i][1];
+            bullets.pos[k][2] = enemy.pos[i][2];
+            
+            break;
         }
     }
 
@@ -534,6 +697,21 @@ static gboolean on_idle(gpointer data)
         }
     }
 
+    for(i = 0; i < bullets.num_bullets; i++)
+    {
+        if(!bullets.active[i])
+        {
+            continue;
+        }
+        bullets.pos[i][1] += bullets.dy;
+        detect_player_hit(bullets.pos[i]);
+
+        if(bullets.pos[i][1] < -20.0f)
+        {
+            bullets.active[i] = FALSE;
+        }
+    }
+
     gtk_widget_queue_draw(GTK_WIDGET(data));
     return TRUE;
 }
@@ -568,6 +746,13 @@ static gboolean on_keydown(GtkWidget *widget, GdkEventKey *event)
             }
             player.space = TRUE;
             break;
+        case GDK_KEY_r:
+            if(!gameover.off)
+            {
+                reset_game();
+            }
+            break;
+            
     }
 }
 
@@ -587,3 +772,58 @@ static gboolean on_keyup(GtkWidget *widget, GdkEventKey *event)
     }
 }
 
+static void detect_player_hit(vec3 point)
+{
+    float x_dif, y_dif;
+    x_dif = player.pos[0] - point[0];
+    y_dif = player.pos[1] - point[1];
+
+    if(hypotf(x_dif, y_dif) > 10.0f)
+    {
+        return;
+    }
+    gameover.off = FALSE;
+}
+
+static void reset_game()
+{
+    // Player Sprite
+    player.pos[0] = WIDTH / 2;
+    player.pos[1] = 30.0f;
+    player.pos[2] = 0.0;
+    player.left = FALSE;
+    player.right = FALSE;
+    player.space = FALSE;
+
+    int i;
+    for(i = 0; i < player.num_bullets; i++)
+    {
+        player.active[i] = FALSE;
+    }
+
+    float x = 70.0f;
+    float y = HEIGHT - 140.0f;
+
+    for(i = 0; i < enemy.num_enemies; i++)
+    {
+        enemy.pos[i][0] = x;
+        enemy.pos[i][1] = y;
+        enemy.pos[i][2] = 0.0f;
+        enemy.active[i] = TRUE;
+
+        x += 90.0f;
+        if(i == 4)
+        {
+            x = 70.0f;
+            y += 90.0f;
+        }
+    }
+    bullets.num_bullets = 10;
+
+    for(i = 0; i < bullets.num_bullets; i++)
+    {
+        bullets.active[i] = FALSE;
+    }
+    gameover.off = TRUE;
+    
+}
